@@ -871,3 +871,421 @@ SHOW TABLES;
 
 SHOW FULL TABLES
 WHERE Table_type = 'VIEW';
+
+
+
+
+
+
+
+
+USE finance_db;
+
+SHOW TABLES;
+
+
+
+
+
+
+
+USE finance_db;
+
+SELECT 
+    'customers' AS table_name, COUNT(*) AS total
+FROM
+    customers 
+UNION ALL SELECT 
+    'companies', COUNT(*)
+FROM
+    companies 
+UNION ALL SELECT 
+    'loans', COUNT(*)
+FROM
+    loans 
+UNION ALL SELECT 
+    'repayments', COUNT(*)
+FROM
+    repayments 
+UNION ALL SELECT 
+    'portfolios', COUNT(*)
+FROM
+    portfolios 
+UNION ALL SELECT 
+    'kyc_records', COUNT(*)
+FROM
+    kyc_records 
+UNION ALL SELECT 
+    'financial_results', COUNT(*)
+FROM
+    financial_results 
+UNION ALL SELECT 
+    'stock_prices', COUNT(*)
+FROM
+    stock_prices 
+UNION ALL SELECT 
+    'rejected_rows', COUNT(*)
+FROM
+    rejected_rows;
+    
+    
+    
+    
+    
+    
+    USE finance_db;
+
+INSERT INTO stock_prices
+(company_id, price_date, close_price)
+VALUES
+(1, '2025-01-01', 120.50),
+(1, '2025-02-01', 125.75),
+(2, '2025-01-01', 250.00),
+(2, '2025-02-01', 265.50),
+(3, '2025-01-01', 180.00),
+(3, '2025-02-01', 190.25);
+
+SELECT * FROM stock_prices;
+
+
+
+
+
+
+
+
+USE finance_db;
+
+INSERT INTO rejected_rows
+(source_name, loan_id, amount_due, amount_paid, rejection_reason)
+SELECT
+    'staging_emi',
+    s.loan_id,
+    s.amount_due,
+    s.amount_paid,
+    CASE
+        WHEN s.amount_due <= 0 THEN 'Invalid amount due'
+        WHEN s.amount_paid < 0 THEN 'Negative payment'
+        WHEN s.amount_paid > s.amount_due THEN 'Payment exceeds due'
+        WHEN l.loan_id IS NULL THEN 'Invalid loan ID'
+    END
+FROM staging_emi s
+LEFT JOIN loans l
+ON s.loan_id = l.loan_id
+WHERE s.amount_due <= 0
+   OR s.amount_paid < 0
+   OR s.amount_paid > s.amount_due
+   OR l.loan_id IS NULL;
+
+SELECT * FROM rejected_rows;
+
+
+
+
+
+
+
+USE finance_db;
+
+INSERT INTO repayments
+(loan_id, due_date, amount_due, amount_paid, payment_status)
+SELECT
+    s.loan_id,
+    s.due_date,
+    s.amount_due,
+    s.amount_paid,
+    CASE
+        WHEN s.amount_paid = s.amount_due THEN 'PAID'
+        WHEN s.amount_paid > 0 THEN 'PARTIAL'
+        ELSE 'PENDING'
+    END
+FROM staging_emi s
+WHERE s.amount_due > 0
+AND s.amount_paid BETWEEN 0 AND s.amount_due
+AND EXISTS (
+    SELECT 1
+    FROM loans l
+    WHERE l.loan_id = s.loan_id
+)
+AND NOT EXISTS (
+    SELECT 1
+    FROM repayments r
+    WHERE r.loan_id = s.loan_id
+    AND r.due_date = s.due_date
+);
+
+SELECT * FROM repayments
+ORDER BY repayment_id DESC;
+
+USE finance_db;
+
+CREATE TEMPORARY TABLE staging_emi (
+    loan_id INT,
+    due_date DATE,
+    amount_due DECIMAL(14,2),
+    amount_paid DECIMAL(14,2)
+);
+
+INSERT INTO staging_emi VALUES
+(1, '2025-08-01', 5000, 5000),
+(1, '2025-08-15', -500, 0),
+(2, '2025-08-20', 6000, 7000),
+(999, '2025-08-25', 5000, 0),
+(3, '2025-08-30', 7000, 0);
+
+SELECT * FROM staging_emi;
+
+
+
+
+
+
+
+
+
+
+
+USE finance_db;
+
+SELECT
+    (SELECT COUNT(*) FROM customers) AS customers,
+    (SELECT COUNT(*) FROM loans) AS loans,
+    (SELECT COUNT(*) FROM repayments) AS repayments,
+    (SELECT COUNT(*) FROM stock_prices) AS stock_prices,
+    (SELECT COUNT(*) FROM rejected_rows) AS rejected_records;
+    
+    
+    
+    
+    
+    
+    
+    USE finance_db;
+
+EXPLAIN
+SELECT
+    loan_id,
+    COUNT(*) AS total_payments,
+    SUM(amount_due) AS total_due,
+    SUM(amount_paid) AS total_paid
+FROM repayments
+WHERE due_date >= '2025-01-01'
+GROUP BY loan_id;
+
+
+
+
+
+
+USE finance_db;
+
+EXPLAIN ANALYZE
+SELECT
+    l.loan_id,
+    c.full_name,
+    SUM(r.amount_due) AS total_due,
+    SUM(r.amount_paid) AS total_paid
+FROM loans l
+JOIN customers c
+    ON l.customer_id = c.customer_id
+JOIN repayments r
+    ON l.loan_id = r.loan_id
+WHERE r.due_date >= '2025-01-01'
+GROUP BY l.loan_id, c.full_name;
+
+
+
+
+
+
+USE finance_db;
+
+SHOW INDEX FROM repayments;
+
+
+
+
+
+
+USE finance_db;
+
+CREATE INDEX idx_repayments_due_date
+ON repayments(due_date);
+
+SHOW INDEX FROM repayments;
+
+
+
+
+
+
+
+
+USE finance_db;
+
+EXPLAIN
+SELECT *
+FROM repayments
+WHERE due_date >= '2025-01-01';
+
+
+
+
+
+
+
+
+USE finance_db;
+
+EXPLAIN
+SELECT *
+FROM repayments FORCE INDEX (idx_repayments_due_date)
+WHERE due_date >= '2025-01-01';
+
+
+
+
+
+
+
+
+
+USE finance_db;
+
+SET SESSION cte_max_recursion_depth = 10000;
+
+INSERT INTO repayments
+(loan_id, due_date, paid_date, amount_due, amount_paid, payment_status)
+WITH RECURSIVE seq AS (
+    SELECT 1 AS n
+    UNION ALL
+    SELECT n + 1 FROM seq WHERE n < 10000
+)
+SELECT
+    1,
+    DATE_ADD('2026-01-01', INTERVAL n DAY),
+    NULL,
+    5000,
+    CASE WHEN MOD(n, 4) = 0 THEN 0 ELSE 5000 END,
+    CASE WHEN MOD(n, 4) = 0 THEN 'PENDING' ELSE 'PAID' END
+FROM seq;
+
+
+
+
+
+
+
+USE finance_db;
+
+SELECT COUNT(*) AS total_repayments
+FROM repayments;
+
+
+
+
+
+
+
+SELECT
+    payment_status,
+    COUNT(*) AS total_records
+FROM repayments
+GROUP BY payment_status;
+
+
+
+
+
+
+USE finance_db;
+
+SELECT
+    payment_status,
+    COUNT(*) AS total_records,
+    SUM(amount_due) AS total_due,
+    SUM(amount_paid) AS total_paid
+FROM repayments
+GROUP BY payment_status
+ORDER BY total_records DESC;
+
+
+
+
+
+
+
+USE finance_db;
+
+EXPLAIN
+SELECT *
+FROM repayments
+WHERE due_date >= '2026-01-01'
+AND due_date < '2026-02-01';
+
+
+
+
+
+USE finance_db;
+
+EXPLAIN ANALYZE
+SELECT *
+FROM repayments
+WHERE due_date >= '2026-01-01'
+AND due_date < '2026-02-01';
+
+
+
+
+
+
+
+USE finance_db;
+
+CREATE OR REPLACE VIEW monthly_payment_summary AS
+SELECT
+    DATE_FORMAT(due_date, '%Y-%m') AS payment_month,
+    COUNT(*) AS total_payments,
+    SUM(amount_due) AS total_due,
+    SUM(amount_paid) AS total_paid,
+    SUM(amount_due - amount_paid) AS outstanding_amount
+FROM repayments
+GROUP BY DATE_FORMAT(due_date, '%Y-%m');
+
+
+
+
+
+
+
+SELECT * FROM monthly_payment_summary;
+
+
+
+
+
+USE finance_db;
+
+SELECT
+    COUNT(*) AS total_months,
+    MIN(payment_month) AS first_month,
+    MAX(payment_month) AS last_month,
+    SUM(total_payments) AS total_payments,
+    SUM(total_due) AS total_due,
+    SUM(total_paid) AS total_paid,
+    SUM(outstanding_amount) AS total_outstanding
+FROM monthly_payment_summary;
+
+
+
+
+
+
+USE finance_db;
+
+SELECT
+    COUNT(*) AS total_repayments,
+    SUM(amount_due) AS original_total_due,
+    SUM(amount_paid) AS original_total_paid
+FROM repayments;
